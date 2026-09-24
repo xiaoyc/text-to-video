@@ -53,6 +53,58 @@ npm install
 npm run check
 ```
 
+## Dry-run precut
+
+Generate a readable Director draft without generating images or calling Vision:
+
+```bash
+npm run dev -- run \
+  --script article.md \
+  --out data/my-run \
+  --text-command "./my-text-provider" \
+  --dry-run
+```
+
+This writes `precut-draft.md` / `precut-draft.json`, the validated Director plan, deterministic asset requests/prompts, `dry-run-state.json`, and `run-events.jsonl`. The draft describes intended shots, subjects, framing, motion, expected images, and narration text. It has not been checked against real images or Vision grounding.
+
+### OpenAI quick image test
+
+The native OpenAI text provider uses `gpt-6-luna` through `/v1/responses`. The image provider uses `gpt-image-2` through `/v1/images/generations`; for one prompt and one image, OpenAI recommends the Images API. Set a newly issued `OPENAI_API_KEY` in your local process environment using your normal secure method. Never put the key in the repository or command history:
+
+```bash
+npm run dev -- run \
+  --script "articles/周迪夫妇-扬州城里最后三点微光-source.md" \
+  --out data/zhou-di-test \
+  --dry-run
+npm run dev -- quick-test --run data/zhou-di-test --shots 3 --image-quality low
+```
+
+The first command makes or reuses the complete Director plan. `quick-test` then generates only the first three shots' image states, serially, and writes an image gallery at `data/zhou-di-test/quick-test/index.html`. Each invocation gets a separate iteration folder. To iterate on one shot without rerunning the Director, run:
+
+```bash
+npm run dev -- quick-test \
+  --run data/zhou-di-test \
+  --shot shot-001 \
+  --image-quality low \
+  --hint "主体更大，保留更多周围环境"
+```
+
+Each quick-test call deliberately generates fresh candidate images. These exploratory candidates are not accepted assets, do not enter `asset-cache.json`, and are not marked Vision-grounded. The regular full workflow still requires a Vision command or supplied review JSON before it can create an accepted preview. Use `--image-quality medium` or `high` only after the low-quality composition is working. JPEG is the default for faster iteration; use `--image-format png` for lossless output.
+
+The native OpenAI image provider serializes generation calls. API RPM/RPD limits depend on the account's current usage tier; check the model's rate-limit page for the project being used. A shot can contain multiple fixed image states, so `--shots 3` may generate more than three images.
+
+A later full run with the same script, style, aspect ratio, Director contract, and prompt compiler reuses that plan and continues at asset materialization. Image generation remains independently governed by `asset-cache.json`:
+
+```bash
+npm run dev -- run \
+  --script article.md \
+  --out data/my-run \
+  --image-command "./my-image-provider" \
+  --vision-command "./my-vision-provider"
+```
+
+Changing the script, style, aspect ratio, or plan contract invalidates the plan cache. Add `--force-director` to regenerate the plan even when its fingerprint matches. The generated-image-backed `precut-summary.md` remains separate from the pre-generation `precut-draft.md`.
+
 ## Interactive workflow
 
 ### 1. Plan, generate/import assets, ground, preview
@@ -97,6 +149,8 @@ resolved-motions.json
 preview/index.html
 metrics.json
 ```
+
+When the run started from a reusable dry-run plan, `dry-run-state.json` and `precut-draft.md` / `precut-draft.json` are retained alongside the actual-state `precut-summary.md` / `precut-summary.json`.
 
 ### 2. Reuse accepted images; regenerate only what is needed
 

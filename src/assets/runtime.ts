@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import type { AssetRequest, GeneratedAsset } from '../domain/types.js'
 import type { ImageProvider } from '../providers/image.js'
+import type { RunLogger } from '../runtime/run-log.js'
 import { mapLimit } from '../runtime/concurrency.js'
 import { findCachedAsset } from './cache.js'
 
@@ -43,6 +44,41 @@ export async function generateOneAsset(input: {
   return { assetId: input.request.assetId, shotId: input.request.shotId, role: input.request.role, imagePath: path.resolve(generated.imagePath), provider: generated.provider }
 }
 
+export async function generateCandidateWithLogging(input: {
+  request: AssetRequest
+  outputDir: string
+  provider: ImageProvider
+  logger: RunLogger
+  attempt?: number
+  retryHints?: string[]
+  successMessage?: string
+}): Promise<GeneratedAsset> {
+  const attempt = input.attempt ?? 1
+  input.logger.emit({
+    stage: 'asset', type: 'asset.generation-start', message: 'generating image candidate',
+    assetId: input.request.assetId, shotId: input.request.shotId,
+    data: { attempt, retryHints: input.retryHints ?? [] },
+  })
+
+  try {
+    const asset = await generateOneAsset(input)
+    input.logger.emit({
+      stage: 'asset', type: 'asset.candidate-generated', message: input.successMessage ?? 'image candidate generated',
+      assetId: input.request.assetId, shotId: input.request.shotId,
+      data: { attempt, imagePath: asset.imagePath, provider: asset.provider },
+    })
+    return asset
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    input.logger.emit({
+      stage: 'asset', type: 'asset.generation-failed', message: 'image candidate generation failed',
+      assetId: input.request.assetId, shotId: input.request.shotId,
+      data: { attempt, retryHints: input.retryHints ?? [], error: message },
+    })
+    throw error
+  }
+}
+
 export async function materializeAssets(input: {
   requests: AssetRequest[]
   outputDir: string
@@ -82,7 +118,7 @@ export async function materializeAssets(input: {
     throw new Error(`image provider or --images-dir is required; cache misses: ${missing.map(item => item.assetId).join(', ')}`)
   }
 
-  return mapLimit(input.requests, input.concurrency ?? 4, request => {
+  return mapLimit(input.requests, input.concurrency ?? input.provider?.maxConcurrency ?? 4, request => {
     const hit = cached.get(request.assetId)
     if (hit) return Promise.resolve(hit)
     input.onEvent?.({ type: 'generation-start', assetId: request.assetId, shotId: request.shotId })

@@ -2,6 +2,8 @@ import type { AssetRequest } from '../domain/types.js'
 import { runJsonCommand } from './command.js'
 
 export interface ImageProvider {
+  /** Optional provider-specific cap used by the asset materializer. */
+  maxConcurrency?: number
   generate(input: {
     request: AssetRequest
     outputDir: string

@@ -54,13 +54,24 @@ describe('iteration observability', () => {
     expect(lines[0].type).toBe('asset.cache-hit')
   })
 
-  it('tracks active asset versions only when image/request changes', () => {
+  it('tracks active asset versions when request, path, or image bytes change', () => {
     const { root, request, asset, review, motion } = fixture()
     const file = path.join(root, 'asset-state.json')
     updateAssetStates({ file, requests: [request], assets: [asset], reviews: [review], motions: [motion], reasonByAsset: new Map([[request.assetId, 'initial-generation']]) })
     updateAssetStates({ file, requests: [request], assets: [asset], reviews: [review], motions: [motion], reasonByAsset: new Map([[request.assetId, 'cache-reuse']]) })
     expect(readAssetState(file).entries[request.assetId]?.version).toBe(1)
     expect(readAssetState(file).entries[request.assetId]?.lastObservedReason).toBe('cache-reuse')
+
+    const originalHash = readAssetState(file).entries[request.assetId]?.contentHash
+    fs.writeFileSync(asset.imagePath, 'overwritten at the same path')
+    updateAssetStates({
+      file, requests: [request], assets: [asset], reviews: [review], motions: [motion],
+      reasonByAsset: new Map([[request.assetId, 'manual-import: image replaced in place']]),
+    })
+    const samePathState = readAssetState(file).entries[request.assetId]!
+    expect(samePathState.version).toBe(2)
+    expect(samePathState.contentHash).not.toBe(originalHash)
+    expect(samePathState.lastChangeReason).toContain('replaced in place')
 
     const replacementPath = path.join(root, 'asset-0001-v2.png')
     fs.writeFileSync(replacementPath, 'replacement')
@@ -69,7 +80,7 @@ describe('iteration observability', () => {
       reasonByAsset: new Map([[request.assetId, 'user-rerun: subject too small']]),
     })
     const state = readAssetState(file).entries[request.assetId]!
-    expect(state.version).toBe(2)
+    expect(state.version).toBe(3)
     expect(state.lastChangeReason).toContain('subject too small')
   })
 
@@ -91,5 +102,23 @@ describe('iteration observability', () => {
     expect(report.cache.hashMatches).toBe(true)
     expect(report.evidence.join(' ')).toContain('Vision accepted')
     expect(fs.existsSync(path.join(root, 'debug', request.assetId + '.json'))).toBe(true)
+  })
+
+  it('diagnoses a missing generated-asset cache entry as a cache issue', () => {
+    const { root, pkg, request, asset, review, motion } = fixture()
+    writeJson(path.join(root, 'director.json'), pkg)
+    writeJson(path.join(root, 'director-findings.json'), [])
+    writeJson(path.join(root, 'asset-requests.json'), [request])
+    writeJson(path.join(root, 'assets.json'), [asset])
+    writeJson(path.join(root, 'vision-reviews.json'), [review])
+    writeJson(path.join(root, 'resolved-motions.json'), [motion])
+    updateAssetStates({
+      file: path.join(root, 'asset-state.json'), requests: [request], assets: [asset], reviews: [review], motions: [motion],
+    })
+
+    const report = analyzeAssetDebug(root, request.assetId)
+    expect(report.suspectedLayer).toBe('cache')
+    expect(report.evidence.join(' ')).toContain('no reusable cache entry')
+    expect(report.cache.present).toBe(false)
   })
 })

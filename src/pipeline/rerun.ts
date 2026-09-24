@@ -3,7 +3,7 @@ import path from 'node:path'
 import type { AssetRequest, DirectorPackage, GeneratedAsset, ResolvedMotion, TtsCue, VisionReviewResult } from '../domain/types.js'
 import type { ImageProvider } from '../providers/image.js'
 import type { VisionProvider } from '../vision/provider.js'
-import { generateOneAsset } from '../assets/runtime.js'
+import { generateCandidateWithLogging } from '../assets/runtime.js'
 import { persistAssetsToCache } from '../assets/cache.js'
 import { updateAssetStates } from '../assets/state.js'
 import { reviewAndGroundAll, resolveAllMotions } from '../vision/runtime.js'
@@ -62,13 +62,10 @@ export async function rerunAsset(input: { runDir: string; assetId: string; image
   const reason = input.retryHint?.trim() ? `user-rerun: ${input.retryHint.trim()}` : 'user-rerun: explicit single-asset regeneration'
   logger.emit({ stage: 'asset', type: 'asset.user-rerun', message: reason, assetId: input.assetId, shotId: request.shotId })
 
-  const regenerated = await generateOneAsset({
+  const regenerated = await generateCandidateWithLogging({
     request, outputDir: regenerationDir(input.runDir, input.assetId), provider: input.imageProvider, attempt: 2,
     retryHints: [input.retryHint?.trim() || 'User explicitly requested a new image candidate for this asset; preserve the declared shot subject and framing intent.'],
-  })
-  logger.emit({
-    stage: 'asset', type: 'asset.candidate-generated', message: 'isolated replacement candidate generated',
-    assetId: input.assetId, shotId: request.shotId, data: { imagePath: regenerated.imagePath, provider: regenerated.provider },
+    logger, successMessage: 'isolated replacement candidate generated',
   })
 
   const replacementReviews = await reviewAndGroundAll({ pkg: state.pkg, requests: [request], assets: [regenerated], provider: input.visionProvider })
@@ -116,15 +113,12 @@ export async function rerunShot(input: { runDir: string; shotId: string; imagePr
   const candidateDir = regenerationDir(input.runDir, input.shotId)
   const regenerated: GeneratedAsset[] = []
   for (const request of targetRequests) {
-    const asset = await generateOneAsset({
+    const asset = await generateCandidateWithLogging({
       request, outputDir: candidateDir, provider: input.imageProvider, attempt: 2,
       retryHints: ['Local shot rerun requested; preserve the declared shot subject and framing intent.'],
+      logger, successMessage: 'shot replacement candidate generated',
     })
     regenerated.push(asset)
-    logger.emit({
-      stage: 'asset', type: 'asset.candidate-generated', message: 'shot replacement candidate generated',
-      assetId: request.assetId, shotId: request.shotId, data: { imagePath: asset.imagePath, provider: asset.provider },
-    })
   }
 
   const shotReviews = await reviewAndGroundAll({ pkg: state.pkg, requests: targetRequests, assets: regenerated, provider: input.visionProvider })

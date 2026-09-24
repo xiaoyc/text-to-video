@@ -15,6 +15,7 @@ import { materializeAssets } from '../src/assets/runtime.js'
 import { persistAssetsToCache, readAssetCache } from '../src/assets/cache.js'
 import { compileAssetRequests } from '../src/assets/prompt-compiler.js'
 import { rerunAsset } from '../src/pipeline/rerun.js'
+import { readAssetState } from '../src/assets/state.js'
 import { resolveAllMotions } from '../src/vision/runtime.js'
 import { readJson, writeJson } from '../src/runtime/workspace.js'
 import { zhouDiGoldenPackage } from './fixtures/zhou-di.js'
@@ -183,5 +184,22 @@ describe('asset generation cache', () => {
 
     const plan = readJson<{ assets: GeneratedAsset[] }>(path.join(runDir, 'preview-plan.json'))
     expect(plan.assets.find(asset => asset.assetId === target.assetId)?.imagePath).toBe(replacement.imagePath)
+
+    const activeStateBeforeFailure = readAssetState(path.join(runDir, 'asset-state.json'))
+    const failingProvider: ImageProvider = {
+      async generate() {
+        throw new Error('provider unavailable')
+      },
+    }
+    await expect(rerunAsset({
+      runDir, assetId: target.assetId, imageProvider: failingProvider, visionProvider,
+    })).rejects.toThrow('provider unavailable')
+
+    const events = fs.readFileSync(path.join(runDir, 'run-events.jsonl'), 'utf8')
+      .trim().split('\n').map(line => JSON.parse(line) as { type: string; data?: { error?: string } })
+    const failure = events.find(event => event.type === 'asset.generation-failed')
+    expect(failure?.data?.error).toBe('provider unavailable')
+    expect(readJson<GeneratedAsset[]>(path.join(runDir, 'assets.json')).find(asset => asset.assetId === target.assetId)?.imagePath).toBe(replacement.imagePath)
+    expect(readAssetState(path.join(runDir, 'asset-state.json'))).toEqual(activeStateBeforeFailure)
   })
 })

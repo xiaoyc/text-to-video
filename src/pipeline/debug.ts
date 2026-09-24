@@ -92,10 +92,14 @@ export function analyzeAssetDebug(runDir: string, assetId: string): AssetDebugRe
       recommendedSourceFix = imageConstraint
         ? 'Regenerate this image with more safe crop room / required subjects visible.'
         : 'Fix the motion resolver or shot motion intent before regenerating the image.'
-    } else if (cacheEntry && (!cacheHashMatches || !cacheImageExists)) {
+    } else if (asset.provider !== 'manual' && (
+      !cacheEntry || !cacheHashMatches || !cacheImageExists || cacheEntry.imagePath !== asset.imagePath
+    )) {
       suspectedLayer = 'cache'
-      if (!cacheHashMatches) evidence.push('cache entry belongs to a different asset-request hash')
-      if (!cacheImageExists) evidence.push('cache entry points to a missing image')
+      if (!cacheEntry) evidence.push('active generated asset has no reusable cache entry')
+      if (cacheEntry && !cacheHashMatches) evidence.push('cache entry belongs to a different asset-request hash')
+      if (cacheEntry && !cacheImageExists) evidence.push('cache entry points to a missing image')
+      if (cacheEntry && cacheEntry.imagePath !== asset.imagePath) evidence.push('cache entry does not point to the active image')
       recommendedSourceFix = 'Repair/refresh the cache entry; do not regenerate unless the active image is also invalid.'
     } else {
       evidence.push(`Vision accepted score=${review.score}`)

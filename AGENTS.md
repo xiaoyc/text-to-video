@@ -32,6 +32,9 @@ DIRECT -> VALIDATE -> ASSET -> GROUND -> RESOLVE -> RENDER
 18. `asset-state.json` is the active asset/version ledger. Local fixes must record why the active image changed instead of silently replacing it.
 19. Debugging should identify the earliest plausible source layer (Director, prompt compiler, image candidate, Vision, motion, cache/workflow) before applying a downstream patch.
 20. Every successful run/rerun must refresh `precut-summary.md` and `precut-summary.json` from actual workflow state; summaries are deterministic observability, not another LLM planning pass.
+21. Dry run must stop after Director validation and deterministic prompt compilation; it must not materialize images, run Vision/grounding/motion, build preview, synthesize TTS, or render.
+22. Plan cache and image cache are separate. Full runs may reuse a fingerprint-matched dry-run plan, but must continue to validate/reuse images through the image cache; `--force-director` bypasses the plan cache.
+23. Bump the Director contract or asset prompt compiler version in `src/runtime/input-fingerprint.ts` whenever its respective behavior changes, so old plans cannot be reused across incompatible code.
 
 ## Current milestone
 

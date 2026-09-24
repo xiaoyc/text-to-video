@@ -1,4 +1,5 @@
 import fs from 'node:fs'
+import crypto from 'node:crypto'
 import type { AssetRequest, GeneratedAsset, ResolvedMotion, VisionReviewResult } from '../domain/types.js'
 import { assetRequestHash } from './cache.js'
 import { readJson, writeJson } from '../runtime/workspace.js'
@@ -8,6 +9,7 @@ export interface ActiveAssetState {
   shotId: string
   requestHash: string
   activeImagePath: string
+  contentHash: string
   provider: string
   version: number
   lastChangedAt: string
@@ -25,6 +27,10 @@ export interface AssetStateManifest {
 
 function empty(): AssetStateManifest {
   return { version: 1, entries: {} }
+}
+
+function imageContentHash(imagePath: string): string {
+  return `sha256:${crypto.createHash('sha256').update(fs.readFileSync(imagePath)).digest('hex')}`
 }
 
 export function readAssetState(file: string): AssetStateManifest {
@@ -56,8 +62,12 @@ export function updateAssetStates(input: {
     const review = reviewById.get(asset.assetId)
     if (!request || !review) continue
     const requestHash = assetRequestHash(request)
+    const contentHash = imageContentHash(asset.imagePath)
     const old = previous.entries[asset.assetId]
-    const changed = !old || old.requestHash !== requestHash || old.activeImagePath !== asset.imagePath
+    const changed = !old
+      || old.requestHash !== requestHash
+      || old.activeImagePath !== asset.imagePath
+      || old.contentHash !== contentHash
     const observedReason = input.reasonByAsset?.get(asset.assetId) ?? (changed ? 'pipeline-approved' : 'pipeline-reuse')
     const motion = motionByShot.get(asset.shotId)
 
@@ -66,6 +76,7 @@ export function updateAssetStates(input: {
       shotId: asset.shotId,
       requestHash,
       activeImagePath: asset.imagePath,
+      contentHash,
       provider: asset.provider,
       version: old ? old.version + (changed ? 1 : 0) : 1,
       lastChangedAt: changed ? now : old.lastChangedAt,

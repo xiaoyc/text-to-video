@@ -5,27 +5,27 @@ import type { TextModel } from '../director/single-pass.js'
 import type { ImageProvider } from '../providers/image.js'
 import type { VisionProvider } from '../vision/provider.js'
 import type { TtsProvider } from '../providers/tts.js'
-import { runSinglePassDirector } from '../director/single-pass.js'
-import { blockingFindings } from '../validation/director-validator.js'
-import { compileAssetRequests } from '../assets/prompt-compiler.js'
 import { persistAssetsToCache } from '../assets/cache.js'
 import { updateAssetStates } from '../assets/state.js'
-import { generateOneAsset, materializeAssets } from '../assets/runtime.js'
+import { generateCandidateWithLogging, materializeAssets } from '../assets/runtime.js'
 import { reviewAndGroundAll, resolveAllMotions } from '../vision/runtime.js'
 import { buildPreviewProject } from '../preview/project.js'
 import { writePreview } from '../preview/html.js'
 import { synthesizeTts } from '../providers/tts.js'
 import { retimeDirectorPackage } from './retime.js'
 import { writePrecutSummary } from './precut-summary.js'
+import { writePrecutDraft } from './precut-draft.js'
+import { preparePlan } from './plan.js'
 import { createRunLogger, type RunLogger } from '../runtime/run-log.js'
-import { ensureDir, writeAssetPromptFiles, writeJson } from '../runtime/workspace.js'
+import { ensureDir, writeJson } from '../runtime/workspace.js'
+import type { PreparedPlan } from './plan.js'
 
 export interface PipelineRunOptions {
   script: string
   style: string
   aspectRatio: string
   outputDir: string
-  textModel: TextModel
+  textModel?: TextModel
   imageProvider?: ImageProvider
   imagesDir?: string
   visionProvider?: VisionProvider
@@ -33,6 +33,20 @@ export interface PipelineRunOptions {
   ttsProvider?: TtsProvider
   maxRepairs?: number
   maxImageRetries?: number
+  forceDirector?: boolean
+}
+
+export type DryRunPipelineOptions = Pick<PipelineRunOptions,
+  'script' | 'style' | 'aspectRatio' | 'outputDir' | 'textModel' | 'maxRepairs' | 'forceDirector'
+>
+
+export interface DryRunPipelineResult {
+  pkg: DirectorPackage
+  requests: AssetRequest[]
+  draftPath: string
+  draftJsonPath: string
+  source: PreparedPlan['source']
+  directorCalls: number
 }
 
 export interface PipelineRunResult {
@@ -43,6 +57,42 @@ export interface PipelineRunResult {
   tts: TtsCue[]
   previewPath: string
   metrics: RunMetrics
+}
+
+export async function runDryRunPipeline(options: DryRunPipelineOptions): Promise<DryRunPipelineResult> {
+  ensureDir(options.outputDir)
+  const logger = createRunLogger(options.outputDir)
+  logger.emit({
+    stage: 'pipeline', type: 'dry-run.start', message: 'dry run started',
+    data: { style: options.style, aspectRatio: options.aspectRatio, scriptLength: options.script.length },
+  })
+  const plan = await preparePlan({ ...options, saveDryRunCache: true, logger })
+  const draft = writePrecutDraft({
+    runDir: options.outputDir,
+    pkg: plan.pkg,
+    requests: plan.requests,
+    planSource: plan.source,
+    directorCalls: plan.metrics.llmCalls,
+    inputFingerprint: plan.inputFingerprint,
+  })
+  const draftPath = path.join(options.outputDir, 'precut-draft.md')
+  const draftJsonPath = path.join(options.outputDir, 'precut-draft.json')
+  logger.emit({
+    stage: 'precut', type: 'precut.draft-written', message: 'dry-run precut draft written',
+    data: { markdownPath: draftPath, jsonPath: draftJsonPath, shotCount: draft.overview.shotCount },
+  })
+  logger.emit({
+    stage: 'pipeline', type: 'dry-run.complete', message: 'dry run completed before asset generation',
+    data: { inputFingerprint: plan.inputFingerprint, source: plan.source },
+  })
+  return {
+    pkg: plan.pkg,
+    requests: plan.requests,
+    draftPath,
+    draftJsonPath,
+    source: plan.source,
+    directorCalls: plan.metrics.llmCalls,
+  }
 }
 
 async function reviewAll(
@@ -139,12 +189,9 @@ async function repairGeneratedAssets(input: {
         assetId, shotId: request.shotId, data: { retryHints },
       })
       input.reasonByAsset.set(assetId, `auto-retry: ${retryHints.join('; ')}`)
-      const asset = await generateOneAsset({
+      const asset = await generateCandidateWithLogging({
         request, outputDir: input.outputDir, provider: input.imageProvider, attempt: attempt + 1, retryHints,
-      })
-      input.logger.emit({
-        stage: 'asset', type: 'asset.regenerated', message: 'generated replacement candidate',
-        assetId, shotId: request.shotId, data: { imagePath: asset.imagePath, provider: asset.provider },
+        logger: input.logger,
       })
       replacements.set(assetId, asset)
     }
@@ -164,30 +211,18 @@ export async function runPipeline(options: PipelineRunOptions): Promise<Pipeline
     stage: 'pipeline', type: 'pipeline.start', message: 'workflow started',
     data: { style: options.style, aspectRatio: options.aspectRatio, scriptLength: options.script.length },
   })
-
-  const director = await runSinglePassDirector(options.textModel, {
-    script: options.script, style: options.style, aspectRatio: options.aspectRatio,
-  }, { maxRepairs: options.maxRepairs ?? 1 })
-  const blocking = blockingFindings(director.findings)
-  writeJson(path.join(options.outputDir, 'director.json'), director.package)
-  writeJson(path.join(options.outputDir, 'director-findings.json'), director.findings)
-  logger.emit({
-    stage: 'director', type: 'director.complete', message: `director produced ${director.package.shots.length} shots`,
-    data: {
-      llmCalls: director.metrics.llmCalls, repairCalls: director.metrics.repairCalls,
-      blockingFindings: blocking.length,
-      warningFindings: director.findings.filter(item => item.severity === 'warning').length,
-    },
+  const plan = await preparePlan({
+    script: options.script,
+    style: options.style,
+    aspectRatio: options.aspectRatio,
+    outputDir: options.outputDir,
+    ...(options.textModel ? { textModel: options.textModel } : {}),
+    ...(options.maxRepairs !== undefined ? { maxRepairs: options.maxRepairs } : {}),
+    ...(options.forceDirector ? { forceDirector: true } : {}),
+    logger,
   })
-  if (blocking.length) {
-    logger.emit({ stage: 'director', type: 'director.blocked', message: 'blocking validation findings remain', data: { issues: blocking.map(item => item.issue) } })
-    throw new Error(`Director validation failed after bounded repair: ${blocking.map(item => item.issue).join('; ')}`)
-  }
-
-  const requests = compileAssetRequests(director.package)
-  writeJson(path.join(options.outputDir, 'asset-requests.json'), requests)
-  writeAssetPromptFiles(options.outputDir, requests)
-  logger.emit({ stage: 'prompt', type: 'prompt.compiled', message: `compiled ${requests.length} deterministic image prompts` })
+  const director = { package: plan.pkg, findings: plan.findings, metrics: plan.metrics }
+  const requests = plan.requests
 
   let assets = await materializeAssets({
     requests,
@@ -283,7 +318,7 @@ export async function runPipeline(options: PipelineRunOptions): Promise<Pipeline
   const metrics: RunMetrics = {
     director: { ...director.metrics, durationMs: Date.now() - started },
     validation: {
-      blockingFindings: blocking.length,
+      blockingFindings: 0,
       warningFindings: director.findings.filter(item => item.severity === 'warning').length,
     },
     assets: { count: assets.length },
