@@ -1,44 +1,205 @@
 # text-to-video
 
-A clean narrative-to-video engine focused on **single-pass AI directing** and **grounded camera motion**.
+A clean narrative-to-video engine built around **single-pass AI directing** and **grounded camera motion**.
 
 ## Core pipeline
 
 ```text
 Script
   -> Director LLM (normally 1 call)
-  -> local validation
+  -> local validators
   -> optional unified repair (max 1 call)
-  -> deterministic image prompt compiler
+  -> deterministic image-prompt compiler
   -> image generation/import
-  -> Vision review + subject grounding
-  -> motion resolution from the real image
-  -> preview
+  -> one Vision pass: review + subject grounding
+  -> grounded motion resolver
+  -> interactive preview
+  -> local shot/asset rerun
   -> lock
-  -> TTS / retime
-  -> HyperFrames / Three.js render
+  -> real TTS + deterministic retime
+  -> HyperFrames final render
 ```
 
-The key rule is: **the Director chooses creative intent; executable camera coordinates are resolved only after a real image exists.**
+The Director chooses creative intent. Exact camera execution is resolved only after the real image exists.
 
-For example, the Director may say "slow push-in toward the copper coins." The generated image is then grounded to locate the actual coins, and the motion resolver computes a safe focus/zoom path from that real geometry.
+A shot such as “slow push-in toward the copper coins” therefore becomes:
 
-## Development
+```text
+Director intent
+  -> generated image
+  -> Vision locates real coin bbox/center + safe crop
+  -> motion resolver creates executable keyframes
+  -> preview/render
+```
+
+## Architecture invariants
+
+- Normal pre-edit: 1 text-model call.
+- Blocking plan issues: at most 1 unified repair call.
+- Every shot has one primary `ShotSubject`.
+- Every non-static camera move names a declared target subject.
+- Final image prompts are deterministic by default; there is no Prompt-Writer LLM.
+- Vision review and grounding are one model call per image candidate.
+- Renderer code executes the plan; it does not silently re-direct.
+- A locked run cannot be mutated before final TTS/render.
+- TTS retimes the locked plan; it does not regenerate shots.
+
+See [AGENTS.md](AGENTS.md) and [the v0.1 architecture plan](docs/plans/2026-09-24-v0.1-single-pass-director-grounded-motion.md).
+
+## Install
 
 ```bash
 npm install
 npm run check
 ```
 
-The first golden fixture is a six-shot Zhou Di / Yangzhou gate sequence covering:
+## Interactive workflow
 
-- object focus and push-in;
+### 1. Plan, generate/import assets, ground, preview
+
+With command providers:
+
+```bash
+npm run dev -- run \
+  --script article.md \
+  --out data/my-run \
+  --text-command "./my-text-provider" \
+  --image-command "./my-image-provider" \
+  --vision-command "./my-vision-provider"
+```
+
+Or use an already-authored Director JSON and manually generated images:
+
+```bash
+npm run dev -- run \
+  --script article.md \
+  --out data/my-run \
+  --director-json director.json \
+  --images-dir generated-images \
+  --vision-json vision-reviews.json
+```
+
+The run writes:
+
+```text
+director.json
+director-findings.json
+asset-requests.json
+prompts/*.md
+assets.json
+vision-reviews.json
+resolved-motions.json
+preview/index.html
+metrics.json
+```
+
+### 2. Fix one bad shot only
+
+```bash
+npm run dev -- rerun-shot \
+  --run data/my-run \
+  --shot shot-001 \
+  --image-command "./my-image-provider" \
+  --vision-command "./my-vision-provider"
+```
+
+This does **not** rerun the Director or unrelated images.
+
+### 3. Lock the approved creative plan
+
+```bash
+npm run dev -- lock --run data/my-run
+```
+
+The lock fingerprints Director/assets/Vision/motion. Later mutation fails closed.
+
+### 4. Generate real TTS and retime
+
+```bash
+npm run dev -- tts \
+  --run data/my-run \
+  --tts-command "./my-tts-provider" \
+  --concurrency 3
+```
+
+This writes a retimed Director copy and retimed grounded motions while keeping the original locked Director unchanged.
+
+### 5. Final render
+
+```bash
+npm run dev -- render \
+  --run data/my-run \
+  --quality high
+```
+
+The renderer uses `hyperframes@0.8.57` through `npx`. It consumes the resolved motion plan; it does not invent camera decisions.
+
+## Command-provider protocol
+
+Providers receive exactly one JSON object on stdin and return exactly one JSON object on stdout.
+
+Text provider request:
+
+```json
+{
+  "kind": "text",
+  "responseFormat": "json",
+  "system": "...",
+  "prompt": "..."
+}
+```
+
+It returns a complete `DirectorPackage`.
+
+Image provider request includes `request`, `outputDir`, `attempt`, and `retryHints`, and returns:
+
+```json
+{ "imagePath": "/absolute/path/image.png", "provider": "my-provider" }
+```
+
+Vision provider returns both acceptance and grounding in the same response:
+
+```json
+{
+  "accepted": true,
+  "score": 90,
+  "reasons": [],
+  "retryHints": [],
+  "grounding": {
+    "assetId": "asset-0001",
+    "shotId": "shot-001",
+    "primary": {
+      "subjectId": "copper-coins",
+      "detected": true,
+      "bbox": { "x": 0.19, "y": 0.56, "width": 0.18, "height": 0.15 },
+      "center": { "x": 0.28, "y": 0.635 },
+      "confidence": 0.94
+    },
+    "secondary": [],
+    "safeCrop": {
+      "maxScale": 1.55,
+      "recommendedFocusCenter": { "x": 0.28, "y": 0.635 }
+    }
+  }
+}
+```
+
+All Vision coordinates are normalized to `0..1`.
+
+## Golden tests
+
+The repository includes a six-shot Zhou Di / Yangzhou gate fixture covering:
+
+- object focus and grounded push-in;
 - relationship composition;
 - handoff asset states;
 - refocus;
 - delayed reveal;
-- landmark / 2.5D intent.
+- landmark / 2.5D intent;
+- full run + lock + TTS retime.
 
-## Architecture plan
+Run:
 
-See [docs/plans/2026-09-24-v0.1-single-pass-director-grounded-motion.md](docs/plans/2026-09-24-v0.1-single-pass-director-grounded-motion.md).
+```bash
+npm run check
+```
