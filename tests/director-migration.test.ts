@@ -35,7 +35,7 @@ describe('director migration quality gates', () => {
     shot.durationMs = 50000
     shot.endMs = 50000
     shot.internalBeatsMs = []
-    shot.reveal = undefined
+    delete shot.reveal
     shot.visualEvents = []
     shot.overlays = []
     expect(shot.assetStates.length).toBeGreaterThan(1)
