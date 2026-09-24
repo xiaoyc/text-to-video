@@ -5,6 +5,15 @@ import type { ImageProvider } from '../providers/image.js'
 import { mapLimit } from '../runtime/concurrency.js'
 import { findCachedAsset } from './cache.js'
 
+export interface AssetMaterializationEvent {
+  type: 'manual-import' | 'cache-hit' | 'cache-miss' | 'generation-start' | 'generated' | 'generation-failed'
+  assetId: string
+  shotId: string
+  imagePath?: string
+  provider?: string
+  error?: string
+}
+
 const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.webp']
 
 function findManualImage(imagesDir: string, assetId: string): string | undefined {
@@ -13,10 +22,8 @@ function findManualImage(imagesDir: string, assetId: string): string | undefined
     if (fs.existsSync(exact)) return exact
   }
   const files = fs.readdirSync(imagesDir)
-  return files
-    .filter(name => name.startsWith(assetId + '.') || name.startsWith(assetId + '-'))
-    .map(name => path.join(imagesDir, name))
-    .find(file => fs.statSync(file).isFile())
+  return files.filter(name => name.startsWith(assetId + '.') || name.startsWith(assetId + '-'))
+    .map(name => path.join(imagesDir, name)).find(file => fs.statSync(file).isFile())
 }
 
 export async function generateOneAsset(input: {
@@ -33,13 +40,7 @@ export async function generateOneAsset(input: {
     ...(input.retryHints ? { retryHints: input.retryHints } : {}),
   })
   if (!fs.existsSync(generated.imagePath)) throw new Error(`generated image missing: ${generated.imagePath}`)
-  return {
-    assetId: input.request.assetId,
-    shotId: input.request.shotId,
-    role: input.request.role,
-    imagePath: path.resolve(generated.imagePath),
-    provider: generated.provider,
-  }
+  return { assetId: input.request.assetId, shotId: input.request.shotId, role: input.request.role, imagePath: path.resolve(generated.imagePath), provider: generated.provider }
 }
 
 export async function materializeAssets(input: {
@@ -49,6 +50,7 @@ export async function materializeAssets(input: {
   provider?: ImageProvider
   concurrency?: number
   cacheFile?: string
+  onEvent?: (event: AssetMaterializationEvent) => void
 }): Promise<GeneratedAsset[]> {
   fs.mkdirSync(input.outputDir, { recursive: true })
 
@@ -56,13 +58,9 @@ export async function materializeAssets(input: {
     return input.requests.map(request => {
       const imagePath = findManualImage(input.imagesDir!, request.assetId)
       if (!imagePath) throw new Error(`manual image missing for ${request.assetId} under ${input.imagesDir}`)
-      return {
-        assetId: request.assetId,
-        shotId: request.shotId,
-        role: request.role,
-        imagePath: path.resolve(imagePath),
-        provider: 'manual',
-      }
+      const asset = { assetId: request.assetId, shotId: request.shotId, role: request.role, imagePath: path.resolve(imagePath), provider: 'manual' }
+      input.onEvent?.({ type: 'manual-import', assetId: request.assetId, shotId: request.shotId, imagePath: asset.imagePath, provider: asset.provider })
+      return asset
     })
   }
 
@@ -70,7 +68,12 @@ export async function materializeAssets(input: {
   if (input.cacheFile) {
     for (const request of input.requests) {
       const hit = findCachedAsset(input.cacheFile, request)
-      if (hit) cached.set(request.assetId, hit)
+      if (hit) {
+        cached.set(request.assetId, hit)
+        input.onEvent?.({ type: 'cache-hit', assetId: request.assetId, shotId: request.shotId, imagePath: hit.imagePath, provider: hit.provider })
+      } else {
+        input.onEvent?.({ type: 'cache-miss', assetId: request.assetId, shotId: request.shotId })
+      }
     }
   }
 
@@ -82,6 +85,15 @@ export async function materializeAssets(input: {
   return mapLimit(input.requests, input.concurrency ?? 4, request => {
     const hit = cached.get(request.assetId)
     if (hit) return Promise.resolve(hit)
+    input.onEvent?.({ type: 'generation-start', assetId: request.assetId, shotId: request.shotId })
     return generateOneAsset({ request, outputDir: input.outputDir, provider: input.provider! })
+      .then(asset => {
+        input.onEvent?.({ type: 'generated', assetId: request.assetId, shotId: request.shotId, imagePath: asset.imagePath, provider: asset.provider })
+        return asset
+      })
+      .catch(error => {
+        input.onEvent?.({ type: 'generation-failed', assetId: request.assetId, shotId: request.shotId, error: error instanceof Error ? error.message : String(error) })
+        throw error
+      })
   })
 }
