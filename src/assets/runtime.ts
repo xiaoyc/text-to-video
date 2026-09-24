@@ -17,6 +17,29 @@ function findManualImage(imagesDir: string, assetId: string): string | undefined
     .find(file => fs.statSync(file).isFile())
 }
 
+export async function generateOneAsset(input: {
+  request: AssetRequest
+  outputDir: string
+  provider: ImageProvider
+  attempt?: number
+  retryHints?: string[]
+}): Promise<GeneratedAsset> {
+  const generated = await input.provider.generate({
+    request: input.request,
+    outputDir: input.outputDir,
+    ...(input.attempt !== undefined ? { attempt: input.attempt } : {}),
+    ...(input.retryHints ? { retryHints: input.retryHints } : {}),
+  })
+  if (!fs.existsSync(generated.imagePath)) throw new Error(`generated image missing: ${generated.imagePath}`)
+  return {
+    assetId: input.request.assetId,
+    shotId: input.request.shotId,
+    role: input.request.role,
+    imagePath: path.resolve(generated.imagePath),
+    provider: generated.provider,
+  }
+}
+
 export async function materializeAssets(input: {
   requests: AssetRequest[]
   outputDir: string
@@ -40,15 +63,7 @@ export async function materializeAssets(input: {
       continue
     }
     if (!input.provider) throw new Error('image provider or --images-dir is required')
-    const generated = await input.provider.generate({ request, outputDir: input.outputDir })
-    if (!fs.existsSync(generated.imagePath)) throw new Error(`generated image missing: ${generated.imagePath}`)
-    assets.push({
-      assetId: request.assetId,
-      shotId: request.shotId,
-      role: request.role,
-      imagePath: path.resolve(generated.imagePath),
-      provider: generated.provider,
-    })
+    assets.push(await generateOneAsset({ request, outputDir: input.outputDir, provider: input.provider }))
   }
 
   return assets
