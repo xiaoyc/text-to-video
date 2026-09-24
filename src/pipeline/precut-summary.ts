@@ -10,6 +10,7 @@ import type {
 import { assetRequestHash, readAssetCache } from '../assets/cache.js'
 import { readAssetState } from '../assets/state.js'
 import { readJson, writeJson } from '../runtime/workspace.js'
+import { assessVisualRhythm } from '../validation/visual-rhythm.js'
 
 export interface PrecutAssetStatus {
   assetId: string
@@ -32,6 +33,7 @@ export interface PrecutShotSummary {
   motionSummary: string
   displaySummary: string
   textSummary: string
+  visualRhythmSummary: string
   assetStatus: PrecutAssetStatus[]
   motionCompatible: boolean
   warnings: string[]
@@ -80,7 +82,8 @@ function movementSummary(pkg: DirectorPackage, shotId: string, motion: ResolvedM
   const adjustment = motion?.adjustments.length
     ? `；执行调整：${motion.adjustments.join('；')}`
     : ''
-  return `${label}，目标是「${target}」；导演任务：${shot.intent.cameraTask}${scale}${adjustment}`
+  const envelope = shot.motionEnvelope ? `；节奏包络：${shot.motionEnvelope}` : ''
+  return `${label}，目标是「${target}」；导演任务：${shot.intent.cameraTask}${envelope}${scale}${adjustment}`
 }
 
 function visualSummary(pkg: DirectorPackage, shotId: string): string {
@@ -99,16 +102,17 @@ function displaySummary(pkg: DirectorPackage, shotId: string, requests: AssetReq
   const roles = requests.map(item => item.role)
   const roleText = roles.length ? `（${roles.join(' → ')}）` : ''
   const reveal = shot.reveal ? `；在 ${(shot.reveal.atMs / 1000).toFixed(1)}s 触发 reveal` : ''
-  return `${requests.length} 张画面${roleText}，渲染模式 ${shot.renderMode}${reveal}。构图意图：${shot.intent.startFraming} → ${shot.intent.endFraming}`
+  const template = shot.shotTemplateId ? `；模板 ${shot.shotTemplateId}` : ''
+  return `${requests.length} 张画面${roleText}，渲染模式 ${shot.renderMode}${template}${reveal}。构图意图：${shot.intent.startFraming} → ${shot.intent.endFraming}`
 }
 
 function textSummary(pkg: DirectorPackage, shotId: string): string {
   const shot = pkg.shots.find(item => item.shotId === shotId)
   if (!shot) return '未找到镜头定义。'
   const subtitle = shot.narrationText?.trim()
-  return subtitle
-    ? `解说字幕：「${subtitle}」；当前镜头协议未声明额外字卡/讲解文字。`
-    : '无解说字幕；当前镜头协议未声明额外字卡/讲解文字。'
+  const overlays = (shot.overlays ?? []).map(item => `${item.type} @ ${(item.atMs / 1000).toFixed(1)}s：「${item.text}」`)
+  const extra = overlays.length ? `额外文字：${overlays.join('；')}` : '无额外字卡/讲解文字'
+  return subtitle ? `解说字幕：「${subtitle}」；${extra}。` : `无解说字幕；${extra}。`
 }
 
 function cacheIsValid(input: {
@@ -140,6 +144,7 @@ export function buildPrecutSummary(input: {
   const shots = input.pkg.shots.map(shot => {
     const requests = input.requests.filter(request => request.shotId === shot.shotId)
     const motion = motionByShot.get(shot.shotId)
+    const rhythm = assessVisualRhythm(shot)
     const statuses: PrecutAssetStatus[] = requests.map(request => {
       const asset = assetById.get(request.assetId)
       const review = reviewById.get(request.assetId)
@@ -174,6 +179,7 @@ export function buildPrecutSummary(input: {
       motionSummary: movementSummary(input.pkg, shot.shotId, motion),
       displaySummary: displaySummary(input.pkg, shot.shotId, requests),
       textSummary: textSummary(input.pkg, shot.shotId),
+      visualRhythmSummary: `${(rhythm.longestIdleMs / 1000).toFixed(1)}s / budget ${(rhythm.maxIdleMs / 1000).toFixed(1)}s · ${rhythm.passed ? 'PASS' : 'FAIL'}`,
       assetStatus: statuses,
       motionCompatible: motion?.compatible ?? false,
       warnings: [...new Set(warnings)],
@@ -230,6 +236,7 @@ export function renderPrecutSummaryMarkdown(summary: PrecutSummary): string {
       `- 运镜：${shot.motionSummary}`,
       `- 显示：${shot.displaySummary}`,
       `- 文字：${shot.textSummary}`,
+      `- 视觉空窗：${shot.visualRhythmSummary}`,
       `- 状态：${status} · motion:${shot.motionCompatible ? 'compatible' : 'incompatible'}`,
       `- 注意：${shot.warnings.length ? shot.warnings.join('；') : '无'}`,
       '',

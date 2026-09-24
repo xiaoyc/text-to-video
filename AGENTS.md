@@ -35,6 +35,9 @@ DIRECT -> VALIDATE -> ASSET -> GROUND -> RESOLVE -> RENDER
 21. Dry run must stop after Director validation and deterministic prompt compilation; it must not materialize images, run Vision/grounding/motion, build preview, synthesize TTS, or render.
 22. Plan cache and image cache are separate. Full runs may reuse a fingerprint-matched dry-run plan, but must continue to validate/reuse images through the image cache; `--force-director` bypasses the plan cache.
 23. Bump the Director contract or asset prompt compiler version in `src/runtime/input-fingerprint.ts` whenever its respective behavior changes, so old plans cannot be reused across incompatible code.
+24. The Director owns source-driven attention/hook, beat type, shot template, visual events, overlays and motion envelope in its single planning pass; do not re-introduce separate creative planner calls for these concerns.
+25. Validation must fail closed on timeline gaps/overlaps, uncovered narrative beats, excessive meaningful visual idle windows, and repair passes that silently delete unaffected shots/beats.
+26. Decorative motion/effects do not satisfy visual-rhythm coverage. A long image-first shot needs structural/informational progression or must be split for narrative reasons.
 
 ## Current milestone
 

@@ -2,12 +2,16 @@ import fs from 'node:fs'
 import path from 'node:path'
 import type { AssetRequest, DirectorPackage, SubjectRef } from '../domain/types.js'
 import { writeJson } from '../runtime/workspace.js'
+import { assessVisualRhythm } from '../validation/visual-rhythm.js'
 
 export interface PrecutDraftShot {
   shotId: string
   beatId: string
   purpose: string
+  beatType?: string
   durationMs: number
+  shotTemplateId?: string
+  motionEnvelope?: string
   narrativeSummary: string
   primarySubject: SubjectRef
   secondarySubjects: SubjectRef[]
@@ -16,6 +20,14 @@ export interface PrecutDraftShot {
   displaySummary: string
   expectedAssets: Array<{ assetId: string; role: string; promptFile: string }>
   textSummary: string
+  visualEventsSummary: string[]
+  overlaySummary: string[]
+  visualRhythm: {
+    longestIdleMs: number
+    maxIdleMs: number
+    passed: boolean
+    coverageReason: string
+  }
   status: 'draft'
 }
 
@@ -70,11 +82,22 @@ export function buildPrecutDraft(input: {
     const target = targetLabel(input.pkg, shot.motion.targetSubjectId)
     const motion = MOTION_LABELS[shot.motion.type] ?? shot.motion.type
     const narration = shot.narrationText?.trim() || beat?.text || ''
+    const rhythm = assessVisualRhythm(shot)
+    const overlays = (shot.overlays ?? []).map(item => {
+      const end = item.endMs !== undefined ? `-${(item.endMs / 1000).toFixed(1)}s` : ''
+      return `${item.type} @ ${(item.atMs / 1000).toFixed(1)}s${end}: ${item.text}`
+    })
+    const visualEvents = rhythm.events
+      .filter(item => item.source !== 'shot-start' && item.source !== 'shot-end')
+      .map(item => `${(item.atMs / 1000).toFixed(1)}s ${item.type}/${item.impact}: ${item.purpose}`)
     return {
       shotId: shot.shotId,
       beatId: shot.beatId,
       purpose: beat?.purpose ?? '',
+      ...(beat?.type ? { beatType: beat.type } : {}),
       durationMs: shot.durationMs,
+      ...(shot.shotTemplateId ? { shotTemplateId: shot.shotTemplateId } : {}),
+      ...(shot.motionEnvelope ? { motionEnvelope: shot.motionEnvelope } : {}),
       narrativeSummary: narration,
       primarySubject: shot.subject.primary,
       secondarySubjects: shot.subject.secondary,
@@ -83,8 +106,16 @@ export function buildPrecutDraft(input: {
       displaySummary: `${expectedAssets.length} 张画面${expectedAssets.length ? `（${expectedAssets.map(asset => asset.role).join(' → ')}）` : ''}，渲染模式 ${shot.renderMode}${shot.reveal ? `；${(shot.reveal.atMs / 1000).toFixed(1)}s reveal「${targetLabel(input.pkg, shot.reveal.subjectId)}」` : ''}`,
       expectedAssets,
       textSummary: narration
-        ? `预计显示解说字幕：「${narration}」；当前 Director 合约未声明额外字卡。`
-        : '未声明解说字幕或额外字卡。',
+        ? `预计显示解说字幕：「${narration}」${overlays.length ? `；额外文字 ${overlays.length} 条。` : '；无额外字卡。'}`
+        : overlays.length ? `无解说字幕；额外文字 ${overlays.length} 条。` : '未声明解说字幕或额外字卡。',
+      visualEventsSummary: visualEvents,
+      overlaySummary: overlays,
+      visualRhythm: {
+        longestIdleMs: rhythm.longestIdleMs,
+        maxIdleMs: rhythm.maxIdleMs,
+        passed: rhythm.passed,
+        coverageReason: rhythm.coverageReason,
+      },
       status: 'draft' as const,
     }
   })
@@ -130,13 +161,18 @@ export function renderPrecutDraftMarkdown(draft: PrecutDraft): string {
       `## ${index + 1}. ${shot.shotId} — ${(shot.durationMs / 1000).toFixed(1)}s`,
       '',
       `- 作用：${shot.purpose || '未标注'}`,
+      `- Beat 类型：${shot.beatType || '未标注'}`,
+      `- 镜头模板：${shot.shotTemplateId || '未标注'}`,
       `- 叙事：${shot.narrativeSummary || '无'}`,
       `- 主体：${shot.primarySubject.label}（${shot.primarySubject.type}）`,
       `- 辅助主体：${secondary}`,
       `- 构图：${shot.compositionSummary}`,
-      `- 运镜意图：${shot.motionIntentSummary}`,
+      `- 运镜意图：${shot.motionIntentSummary}${shot.motionEnvelope ? `；节奏包络：${shot.motionEnvelope}` : ''}`,
       `- 显示：${shot.displaySummary}`,
+      `- 视觉事件：${shot.visualEventsSummary.length ? shot.visualEventsSummary.join('；') : '无额外内部事件'}`,
       `- 文字：${shot.textSummary}`,
+      `- 额外文字：${shot.overlaySummary.length ? shot.overlaySummary.join('；') : '无'}`,
+      `- 视觉空窗：${(shot.visualRhythm.longestIdleMs / 1000).toFixed(1)}s / 预算 ${(shot.visualRhythm.maxIdleMs / 1000).toFixed(1)}s · ${shot.visualRhythm.passed ? 'PASS' : 'FAIL'}`,
       `- 生图 Prompt：${assets}`,
       '- 状态：Draft / 尚未经过真实素材验证',
       '',

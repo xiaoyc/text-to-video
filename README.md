@@ -105,6 +105,14 @@ npm run dev -- run \
 
 Changing the script, style, aspect ratio, or plan contract invalidates the plan cache. Add `--force-director` to regenerate the plan even when its fingerprint matches. The generated-image-backed `precut-summary.md` remains separate from the pre-generation `precut-draft.md`.
 
+### Director quality gates
+
+The current Director keeps one creative planning call, but its contract now includes source-driven attention/hook intent, beat type, a small shot-template catalog, motion envelopes, timed visual events, and optional overlay text. Deterministic validation rejects plans before image generation when the estimated timeline has gaps/overlaps, narrative beats have no shot coverage, a shot exceeds its meaningful visual-idle budget, or the single repair pass silently drops unaffected shots/beats.
+
+`precut-draft.md` surfaces the chosen template, motion envelope, visual events, extra text, and the longest meaningful visual-idle interval for every shot. Decorative particles or tiny continuous camera motion do not count as new information.
+
+This is intentionally a migration of directing knowledge from `video-factory`, not a migration of its multi-planner/reviewer orchestration.
+
 ## Interactive workflow
 
 ### 1. Plan, generate/import assets, ground, preview
