@@ -6,11 +6,15 @@
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "check": "npm run typecheck && npm test"
+    "check": "npm run typecheck && npm test",
+    "dev": "tsx src/cli.ts",
+    "plan": "tsx src/cli.ts plan",
+    "preview": "tsx src/cli.ts preview"
   },
   "devDependencies": {
     "@types/node": "^24.3.0",
     "typescript": "^5.9.2",
-    "vitest": "^3.2.4"
+    "vitest": "^3.2.4",
+    "tsx": "^4.20.5"
   }
 }

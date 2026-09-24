@@ -192,3 +192,65 @@ export interface ResolvedMotion {
   adjustments: string[]
   warnings: string[]
 }
+
+
+export interface GeneratedAsset {
+  assetId: string
+  shotId: string
+  role: string
+  imagePath: string
+  provider: string
+}
+
+export interface TtsCue {
+  beatId: string
+  text: string
+  audioPath: string
+  startMs: number
+  endMs: number
+  durationMs: number
+}
+
+export interface PreviewScene {
+  shotId: string
+  startMs: number
+  durationMs: number
+  renderMode: RenderMode
+  narrationText: string
+  assetIds: string[]
+  switchAtMs: number[]
+  motion: ResolvedMotion
+}
+
+export interface PreviewProject {
+  compositionId: string
+  width: number
+  height: number
+  fps: number
+  durationMs: number
+  scenes: PreviewScene[]
+  assets: GeneratedAsset[]
+  audio: TtsCue[]
+}
+
+export interface RunMetrics {
+  director: {
+    llmCalls: number
+    repairCalls: number
+    durationMs: number
+  }
+  validation: {
+    blockingFindings: number
+    warningFindings: number
+  }
+  assets: {
+    count: number
+  }
+  vision: {
+    calls: number
+    accepted: number
+  }
+  preview: {
+    rebuiltShots: string[]
+  }
+}
