@@ -20,7 +20,7 @@ import { renderHyperFrames } from './render/hyperframes.js'
 import { readJson } from './runtime/workspace.js'
 import { createRunLock, verifyRunLock } from './runtime/lock.js'
 import { finalizeLockedRun } from './pipeline/finalize.js'
-import { rerunShot } from './pipeline/rerun.js'
+import { rerunAsset, rerunShot } from './pipeline/rerun.js'
 
 function args(argv: string[]): Record<string, string | boolean> {
   const out: Record<string, string | boolean> = {}
@@ -77,6 +77,27 @@ async function main() {
       maxImageRetries: Number(opts['image-retries'] ?? 2),
     })
     console.log(JSON.stringify({ previewPath: result.previewPath, metrics: result.metrics }, null, 2))
+    return
+  }
+
+  if (command === 'rerun-asset') {
+    const runDir = path.resolve(String(opts.run ?? 'data/run'))
+    const assetId = String(opts.asset ?? '')
+    if (!assetId) throw new Error('--asset is required')
+    if (fs.existsSync(path.join(runDir, 'lock.json'))) {
+      throw new Error('run is locked; do not mutate assets after lock. Start a new run or remove the lock intentionally.')
+    }
+    const imageCommand = providerCommand(opts, 'image-command', 'TEXT_TO_VIDEO_IMAGE_COMMAND')
+    const visionCommand = providerCommand(opts, 'vision-command', 'TEXT_TO_VIDEO_VISION_COMMAND')
+    if (!imageCommand || !visionCommand) throw new Error('rerun-asset requires image and vision commands')
+    const previewPath = await rerunAsset({
+      runDir,
+      assetId,
+      imageProvider: new CommandImageProvider(imageCommand),
+      visionProvider: new CommandVisionProvider(visionCommand),
+      ...(opts.hint ? { retryHint: String(opts.hint) } : {}),
+    })
+    console.log(previewPath)
     return
   }
 
@@ -162,15 +183,17 @@ async function main() {
   console.log(`text-to-video
 
 Interactive workflow:
-  1. run        script -> Director -> prompts/images -> Vision grounding -> grounded preview
-  2. rerun-shot fix one bad shot without rerunning the Director
-  3. lock       freeze Director/assets/reviews/motion
-  4. tts        synthesize real audio and retime the locked creative plan
-  5. render     HyperFrames final render
+  1. run         script -> Director -> prompts/images -> Vision grounding -> grounded preview
+  2. rerun-asset regenerate exactly one prompt/image and update downstream workflow state
+  3. rerun-shot  regenerate all image assets for one shot without rerunning the Director
+  4. lock        freeze Director/assets/reviews/motion
+  5. tts         synthesize real audio and retime the locked creative plan
+  6. render      HyperFrames final render
 
 Commands:
   run --script article.md --out data/run --text-command "<cmd>" --image-command "<cmd>" --vision-command "<cmd>"
   run --script article.md --out data/run --director-json director.json --images-dir images --vision-json reviews.json
+  rerun-asset --run data/run --asset asset-0001 --image-command "<cmd>" --vision-command "<cmd>" [--hint "user feedback"]
   rerun-shot --run data/run --shot shot-001 --image-command "<cmd>" --vision-command "<cmd>"
   lock --run data/run
   tts --run data/run --tts-command "<cmd>" [--concurrency 3]

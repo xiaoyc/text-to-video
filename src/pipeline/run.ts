@@ -15,6 +15,7 @@ import type { TtsProvider } from '../providers/tts.js'
 import { runSinglePassDirector } from '../director/single-pass.js'
 import { blockingFindings } from '../validation/director-validator.js'
 import { compileAssetRequests } from '../assets/prompt-compiler.js'
+import { persistAssetsToCache } from '../assets/cache.js'
 import { generateOneAsset, materializeAssets } from '../assets/runtime.js'
 import { reviewAndGroundAll, resolveAllMotions } from '../vision/runtime.js'
 import { buildPreviewProject } from '../preview/project.js'
@@ -164,6 +165,7 @@ export async function runPipeline(options: PipelineRunOptions): Promise<Pipeline
     outputDir: path.join(options.outputDir, 'assets'),
     ...(options.imagesDir ? { imagesDir: options.imagesDir } : {}),
     ...(options.imageProvider ? { provider: options.imageProvider } : {}),
+    cacheFile: path.join(options.outputDir, 'asset-cache.json'),
   })
   let reviews = await reviewAll(director.package, requests, assets, options.visionProvider, options.suppliedReviews)
 
@@ -201,6 +203,12 @@ export async function runPipeline(options: PipelineRunOptions): Promise<Pipeline
   writeJson(path.join(options.outputDir, 'resolved-motions.json'), motions)
   const incompatible = motions.filter(motion => !motion.compatible)
   if (incompatible.length) throw new Error(`grounded motion incompatible for shots: ${incompatible.map(item => item.shotId).join(', ')}`)
+
+  // Cache only the final image candidates that survived Vision review and grounded-motion
+  // validation. Failed candidates never become reusable merely because generation succeeded.
+  if (!options.imagesDir) {
+    persistAssetsToCache(path.join(options.outputDir, 'asset-cache.json'), requests, assets)
+  }
 
   const previewPlan = buildPreviewProject({ pkg, assets, motions, tts })
   writeJson(path.join(options.outputDir, 'preview-plan.json'), previewPlan)

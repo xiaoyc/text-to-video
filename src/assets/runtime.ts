@@ -3,6 +3,7 @@ import path from 'node:path'
 import type { AssetRequest, GeneratedAsset } from '../domain/types.js'
 import type { ImageProvider } from '../providers/image.js'
 import { mapLimit } from '../runtime/concurrency.js'
+import { findCachedAsset } from './cache.js'
 
 const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.webp']
 
@@ -47,6 +48,7 @@ export async function materializeAssets(input: {
   imagesDir?: string
   provider?: ImageProvider
   concurrency?: number
+  cacheFile?: string
 }): Promise<GeneratedAsset[]> {
   fs.mkdirSync(input.outputDir, { recursive: true })
 
@@ -64,8 +66,22 @@ export async function materializeAssets(input: {
     })
   }
 
-  if (!input.provider) throw new Error('image provider or --images-dir is required')
-  return mapLimit(input.requests, input.concurrency ?? 4, request =>
-    generateOneAsset({ request, outputDir: input.outputDir, provider: input.provider! }),
-  )
+  const cached = new Map<string, GeneratedAsset>()
+  if (input.cacheFile) {
+    for (const request of input.requests) {
+      const hit = findCachedAsset(input.cacheFile, request)
+      if (hit) cached.set(request.assetId, hit)
+    }
+  }
+
+  const missing = input.requests.filter(request => !cached.has(request.assetId))
+  if (!input.provider && missing.length) {
+    throw new Error(`image provider or --images-dir is required; cache misses: ${missing.map(item => item.assetId).join(', ')}`)
+  }
+
+  return mapLimit(input.requests, input.concurrency ?? 4, request => {
+    const hit = cached.get(request.assetId)
+    if (hit) return Promise.resolve(hit)
+    return generateOneAsset({ request, outputDir: input.outputDir, provider: input.provider! })
+  })
 }

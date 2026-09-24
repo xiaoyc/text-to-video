@@ -86,6 +86,7 @@ director.json
 director-findings.json
 asset-requests.json
 prompts/*.md
+asset-cache.json
 assets.json
 vision-reviews.json
 resolved-motions.json
@@ -93,7 +94,24 @@ preview/index.html
 metrics.json
 ```
 
-### 2. Fix one bad shot only
+### 2. Reuse accepted images; regenerate only what is needed
+
+A normal `run` against the same output directory reuses accepted generated images when the exact asset request (prompt, negative prompt, subject/visibility contract and slot identity) is unchanged. The cache is written only after Vision review and grounded-motion validation succeed, so rejected candidates never become reusable by accident.
+
+Regenerate one prompt/image only:
+
+```bash
+npm run dev -- rerun-asset \
+  --run data/my-run \
+  --asset asset-0001 \
+  --image-command "./my-image-provider" \
+  --vision-command "./my-vision-provider" \
+  --hint "主体太小，重新生成并保持铜钱占据主要视觉注意力"
+```
+
+A successful asset rerun replaces that asset in `assets.json`, refreshes its Vision grounding, recomputes grounded motion, rewrites `preview-plan.json` / preview, and updates `asset-cache.json`. The next normal workflow run therefore uses the replacement image rather than the older cached candidate.
+
+Regenerate every asset in one shot:
 
 ```bash
 npm run dev -- rerun-shot \
@@ -103,7 +121,7 @@ npm run dev -- rerun-shot \
   --vision-command "./my-vision-provider"
 ```
 
-This does **not** rerun the Director or unrelated images.
+Explicit reruns generate into an isolated candidate directory first. If Vision review or grounded motion fails, the currently active workflow and cache remain unchanged.
 
 ### 3. Lock the approved creative plan
 
