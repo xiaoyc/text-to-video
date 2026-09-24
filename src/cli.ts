@@ -1,13 +1,7 @@
 #!/usr/bin/env node
 import fs from 'node:fs'
 import path from 'node:path'
-import type {
-  DirectorPackage,
-  GeneratedAsset,
-  ResolvedMotion,
-  TtsCue,
-  VisionReviewResult,
-} from './domain/types.js'
+import type { DirectorPackage, GeneratedAsset, ResolvedMotion, TtsCue, VisionReviewResult } from './domain/types.js'
 import type { TextModel } from './director/single-pass.js'
 import { runPipeline } from './pipeline/run.js'
 import { CommandTextModel } from './providers/text-command.js'
@@ -21,6 +15,7 @@ import { readJson } from './runtime/workspace.js'
 import { createRunLock, verifyRunLock } from './runtime/lock.js'
 import { finalizeLockedRun } from './pipeline/finalize.js'
 import { rerunAsset, rerunShot } from './pipeline/rerun.js'
+import { analyzeAssetDebug } from './pipeline/debug.js'
 
 function args(argv: string[]): Record<string, string | boolean> {
   const out: Record<string, string | boolean> = {}
@@ -37,9 +32,7 @@ function args(argv: string[]): Record<string, string | boolean> {
 
 class FileTextModel implements TextModel {
   constructor(private readonly file: string) {}
-  async completeJson<T>(): Promise<T> {
-    return readJson<T>(this.file)
-  }
+  async completeJson<T>(): Promise<T> { return readJson<T>(this.file) }
 }
 
 function providerCommand(opts: Record<string, string | boolean>, key: string, envKey: string): string | undefined {
@@ -84,17 +77,12 @@ async function main() {
     const runDir = path.resolve(String(opts.run ?? 'data/run'))
     const assetId = String(opts.asset ?? '')
     if (!assetId) throw new Error('--asset is required')
-    if (fs.existsSync(path.join(runDir, 'lock.json'))) {
-      throw new Error('run is locked; do not mutate assets after lock. Start a new run or remove the lock intentionally.')
-    }
+    if (fs.existsSync(path.join(runDir, 'lock.json'))) throw new Error('run is locked; do not mutate assets after lock. Start a new run or remove the lock intentionally.')
     const imageCommand = providerCommand(opts, 'image-command', 'TEXT_TO_VIDEO_IMAGE_COMMAND')
     const visionCommand = providerCommand(opts, 'vision-command', 'TEXT_TO_VIDEO_VISION_COMMAND')
     if (!imageCommand || !visionCommand) throw new Error('rerun-asset requires image and vision commands')
     const previewPath = await rerunAsset({
-      runDir,
-      assetId,
-      imageProvider: new CommandImageProvider(imageCommand),
-      visionProvider: new CommandVisionProvider(visionCommand),
+      runDir, assetId, imageProvider: new CommandImageProvider(imageCommand), visionProvider: new CommandVisionProvider(visionCommand),
       ...(opts.hint ? { retryHint: String(opts.hint) } : {}),
     })
     console.log(previewPath)
@@ -105,26 +93,26 @@ async function main() {
     const runDir = path.resolve(String(opts.run ?? 'data/run'))
     const shotId = String(opts.shot ?? '')
     if (!shotId) throw new Error('--shot is required')
-    if (fs.existsSync(path.join(runDir, 'lock.json'))) {
-      throw new Error('run is locked; do not mutate assets after lock. Start a new run or remove the lock intentionally.')
-    }
+    if (fs.existsSync(path.join(runDir, 'lock.json'))) throw new Error('run is locked; do not mutate assets after lock. Start a new run or remove the lock intentionally.')
     const imageCommand = providerCommand(opts, 'image-command', 'TEXT_TO_VIDEO_IMAGE_COMMAND')
     const visionCommand = providerCommand(opts, 'vision-command', 'TEXT_TO_VIDEO_VISION_COMMAND')
     if (!imageCommand || !visionCommand) throw new Error('rerun-shot requires image and vision commands')
-    const previewPath = await rerunShot({
-      runDir,
-      shotId,
-      imageProvider: new CommandImageProvider(imageCommand),
-      visionProvider: new CommandVisionProvider(visionCommand),
-    })
+    const previewPath = await rerunShot({ runDir, shotId, imageProvider: new CommandImageProvider(imageCommand), visionProvider: new CommandVisionProvider(visionCommand) })
     console.log(previewPath)
+    return
+  }
+
+  if (command === 'debug-asset') {
+    const runDir = path.resolve(String(opts.run ?? 'data/run'))
+    const assetId = String(opts.asset ?? '')
+    if (!assetId) throw new Error('--asset is required')
+    console.log(JSON.stringify(analyzeAssetDebug(runDir, assetId), null, 2))
     return
   }
 
   if (command === 'lock') {
     const runDir = path.resolve(String(opts.run ?? 'data/run'))
-    const lock = createRunLock(runDir)
-    console.log(JSON.stringify(lock, null, 2))
+    console.log(JSON.stringify(createRunLock(runDir), null, 2))
     return
   }
 
@@ -132,11 +120,7 @@ async function main() {
     const runDir = path.resolve(String(opts.run ?? 'data/run'))
     const ttsCommand = providerCommand(opts, 'tts-command', 'TEXT_TO_VIDEO_TTS_COMMAND')
     if (!ttsCommand) throw new Error('tts requires --tts-command or TEXT_TO_VIDEO_TTS_COMMAND')
-    const result = await finalizeLockedRun({
-      runDir,
-      ttsProvider: new CommandTtsProvider(ttsCommand),
-      concurrency: Number(opts.concurrency ?? 3),
-    })
+    const result = await finalizeLockedRun({ runDir, ttsProvider: new CommandTtsProvider(ttsCommand), concurrency: Number(opts.concurrency ?? 3) })
     console.log(JSON.stringify({ previewPath: result.previewPath, durationMs: result.tts.at(-1)?.endMs ?? 0 }, null, 2))
     return
   }
@@ -146,14 +130,11 @@ async function main() {
     const retimed = fs.existsSync(path.join(runDir, 'director-retimed.json'))
     const pkg = readJson<DirectorPackage>(path.join(runDir, retimed ? 'director-retimed.json' : 'director.json'))
     const assets = readJson<GeneratedAsset[]>(path.join(runDir, 'assets.json'))
-    const motionsFile = retimed && fs.existsSync(path.join(runDir, 'resolved-motions-retimed.json'))
-      ? 'resolved-motions-retimed.json'
-      : 'resolved-motions.json'
+    const motionsFile = retimed && fs.existsSync(path.join(runDir, 'resolved-motions-retimed.json')) ? 'resolved-motions-retimed.json' : 'resolved-motions.json'
     const motions = readJson<ResolvedMotion[]>(path.join(runDir, motionsFile))
     const tts = fs.existsSync(path.join(runDir, 'tts.json')) ? readJson<TtsCue[]>(path.join(runDir, 'tts.json')) : []
     const plan = buildPreviewProject({ pkg, assets, motions, tts })
-    const previewPath = writePreview(plan, path.join(runDir, retimed ? 'preview-retimed' : 'preview'), true)
-    console.log(previewPath)
+    console.log(writePreview(plan, path.join(runDir, retimed ? 'preview-retimed' : 'preview'), true))
     return
   }
 
@@ -163,20 +144,14 @@ async function main() {
     const retimed = fs.existsSync(path.join(runDir, 'director-retimed.json'))
     const pkg = readJson<DirectorPackage>(path.join(runDir, retimed ? 'director-retimed.json' : 'director.json'))
     const assets = readJson<GeneratedAsset[]>(path.join(runDir, 'assets.json'))
-    const motionsFile = retimed && fs.existsSync(path.join(runDir, 'resolved-motions-retimed.json'))
-      ? 'resolved-motions-retimed.json'
-      : 'resolved-motions.json'
+    const motionsFile = retimed && fs.existsSync(path.join(runDir, 'resolved-motions-retimed.json')) ? 'resolved-motions-retimed.json' : 'resolved-motions.json'
     const motions = readJson<ResolvedMotion[]>(path.join(runDir, motionsFile))
     const tts = fs.existsSync(path.join(runDir, 'tts.json')) ? readJson<TtsCue[]>(path.join(runDir, 'tts.json')) : []
     const plan = buildPreviewProject({ pkg, assets, motions, tts })
-    const result = renderHyperFrames({
-      plan,
-      outputDir: path.join(runDir, 'render'),
-      quality: String(opts.quality ?? 'high') as 'draft' | 'standard' | 'high',
-      gpu: opts.gpu !== 'false',
-      runCheck: opts.check !== 'false',
-    })
-    console.log(JSON.stringify(result, null, 2))
+    console.log(JSON.stringify(renderHyperFrames({
+      plan, outputDir: path.join(runDir, 'render'), quality: String(opts.quality ?? 'high') as 'draft' | 'standard' | 'high',
+      gpu: opts.gpu !== 'false', runCheck: opts.check !== 'false',
+    }), null, 2))
     return
   }
 
@@ -186,21 +161,21 @@ Interactive workflow:
   1. run         script -> Director -> prompts/images -> Vision grounding -> grounded preview
   2. rerun-asset regenerate exactly one prompt/image and update downstream workflow state
   3. rerun-shot  regenerate all image assets for one shot without rerunning the Director
-  4. lock        freeze Director/assets/reviews/motion
-  5. tts         synthesize real audio and retime the locked creative plan
-  6. render      HyperFrames final render
+  4. debug-asset diagnose one asset back to Director/prompt/image/Vision/motion/cache source
+  5. lock        freeze Director/assets/reviews/motion
+  6. tts         synthesize real audio and retime the locked creative plan
+  7. render      HyperFrames final render
 
 Commands:
   run --script article.md --out data/run --text-command "<cmd>" --image-command "<cmd>" --vision-command "<cmd>"
   run --script article.md --out data/run --director-json director.json --images-dir images --vision-json reviews.json
   rerun-asset --run data/run --asset asset-0001 --image-command "<cmd>" --vision-command "<cmd>" [--hint "user feedback"]
   rerun-shot --run data/run --shot shot-001 --image-command "<cmd>" --vision-command "<cmd>"
+  debug-asset --run data/run --asset asset-0001
   lock --run data/run
   tts --run data/run --tts-command "<cmd>" [--concurrency 3]
   preview --run data/run
   render --run data/run [--quality draft|standard|high] [--gpu false]
-
-Command providers read one JSON request from stdin and must write one JSON result to stdout.
 `)
 }
 

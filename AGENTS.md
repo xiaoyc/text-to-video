@@ -28,6 +28,9 @@ DIRECT -> VALIDATE -> ASSET -> GROUND -> RESOLVE -> RENDER
 14. Legacy retrieval / TV library / WeMM features may only return later through explicit provider interfaces.
 15. Accepted generated images are cached by exact asset request; a normal workflow rerun must reuse them instead of spending another image-generation call.
 16. A user-requested or quality-triggered single-asset regeneration must replace only that asset, then refresh Vision grounding, motion, preview state, and the cache entry used by future reruns.
+17. Every run/rerun must leave structured observability in `run-events.jsonl`; important cache, generation, Vision, motion and preview decisions must also be visible in the console.
+18. `asset-state.json` is the active asset/version ledger. Local fixes must record why the active image changed instead of silently replacing it.
+19. Debugging should identify the earliest plausible source layer (Director, prompt compiler, image candidate, Vision, motion, cache/workflow) before applying a downstream patch.
 
 ## Current milestone
 
