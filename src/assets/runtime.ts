@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import type { AssetRequest, GeneratedAsset } from '../domain/types.js'
 import type { ImageProvider } from '../providers/image.js'
+import { mapLimit } from '../runtime/concurrency.js'
 
 const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.webp']
 
@@ -45,26 +46,26 @@ export async function materializeAssets(input: {
   outputDir: string
   imagesDir?: string
   provider?: ImageProvider
+  concurrency?: number
 }): Promise<GeneratedAsset[]> {
   fs.mkdirSync(input.outputDir, { recursive: true })
-  const assets: GeneratedAsset[] = []
 
-  for (const request of input.requests) {
-    if (input.imagesDir) {
-      const imagePath = findManualImage(input.imagesDir, request.assetId)
+  if (input.imagesDir) {
+    return input.requests.map(request => {
+      const imagePath = findManualImage(input.imagesDir!, request.assetId)
       if (!imagePath) throw new Error(`manual image missing for ${request.assetId} under ${input.imagesDir}`)
-      assets.push({
+      return {
         assetId: request.assetId,
         shotId: request.shotId,
         role: request.role,
         imagePath: path.resolve(imagePath),
         provider: 'manual',
-      })
-      continue
-    }
-    if (!input.provider) throw new Error('image provider or --images-dir is required')
-    assets.push(await generateOneAsset({ request, outputDir: input.outputDir, provider: input.provider }))
+      }
+    })
   }
 
-  return assets
+  if (!input.provider) throw new Error('image provider or --images-dir is required')
+  return mapLimit(input.requests, input.concurrency ?? 4, request =>
+    generateOneAsset({ request, outputDir: input.outputDir, provider: input.provider! }),
+  )
 }

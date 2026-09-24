@@ -7,17 +7,19 @@ import type {
 } from '../domain/types.js'
 import type { VisionProvider } from './provider.js'
 import { resolveMotionFromGrounding } from '../motion/resolver.js'
+import { mapLimit } from '../runtime/concurrency.js'
 
 export async function reviewAndGroundAll(input: {
   pkg: DirectorPackage
   requests: AssetRequest[]
   assets: GeneratedAsset[]
   provider: VisionProvider
+  concurrency?: number
 }): Promise<VisionReviewResult[]> {
   const requestById = new Map(input.requests.map(request => [request.assetId, request]))
   const shotById = new Map(input.pkg.shots.map(shot => [shot.shotId, shot]))
-  const reviews: VisionReviewResult[] = []
-  for (const asset of input.assets) {
+
+  return mapLimit(input.assets, input.concurrency ?? 4, async asset => {
     const request = requestById.get(asset.assetId)
     const shot = shotById.get(asset.shotId)
     if (!request || !shot) throw new Error(`orphan asset ${asset.assetId}`)
@@ -30,9 +32,8 @@ export async function reviewAndGroundAll(input: {
     if (result.grounding.assetId !== asset.assetId || result.grounding.shotId !== asset.shotId) {
       throw new Error(`vision grounding identity mismatch for ${asset.assetId}`)
     }
-    reviews.push(result)
-  }
-  return reviews
+    return result
+  })
 }
 
 export function resolveAllMotions(pkg: DirectorPackage, reviews: VisionReviewResult[]): ResolvedMotion[] {
@@ -43,12 +44,15 @@ export function resolveAllMotions(pkg: DirectorPackage, reviews: VisionReviewRes
         const all = [review.grounding.primary, ...review.grounding.secondary]
         return all.some(subject => subject.subjectId === shot.motion.targetSubjectId && subject.detected)
       })
+      .map(review => {
+        const resolved = resolveMotionFromGrounding(shot, review.grounding)
+        const all = [review.grounding.primary, ...review.grounding.secondary]
+        const confidence = all.find(subject => subject.subjectId === shot.motion.targetSubjectId)?.confidence ?? 0
+        return { review, resolved, confidence }
+      })
       .sort((a, b) => {
-        const scoreFor = (review: VisionReviewResult) => {
-          const all = [review.grounding.primary, ...review.grounding.secondary]
-          return all.find(subject => subject.subjectId === shot.motion.targetSubjectId)?.confidence ?? 0
-        }
-        return scoreFor(b) - scoreFor(a)
+        if (a.resolved.compatible !== b.resolved.compatible) return a.resolved.compatible ? -1 : 1
+        return b.confidence - a.confidence
       })
 
     const chosen = candidates[0]
@@ -62,6 +66,6 @@ export function resolveAllMotions(pkg: DirectorPackage, reviews: VisionReviewRes
         warnings: ['no accepted asset grounds the motion target'],
       }
     }
-    return resolveMotionFromGrounding(shot, chosen.grounding)
+    return chosen.resolved
   })
 }
