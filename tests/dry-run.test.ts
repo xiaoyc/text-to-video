@@ -175,7 +175,7 @@ describe('dry-run planning and plan cache', () => {
         async completeJson<T>() {
           counter.calls += 1
           const pkg = structuredClone(zhouDiGoldenPackage)
-          Object.assign(pkg, variation.patch)
+          if (counter.calls > 1) Object.assign(pkg, variation.patch)
           return pkg as T
         },
       }
