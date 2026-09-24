@@ -10,6 +10,7 @@ import { reviewAndGroundAll, resolveAllMotions } from '../vision/runtime.js'
 import { buildPreviewProject } from '../preview/project.js'
 import { writePreview } from '../preview/html.js'
 import { createRunLogger, type RunLogger } from '../runtime/run-log.js'
+import { writePrecutSummary } from './precut-summary.js'
 import { readJson, writeJson } from '../runtime/workspace.js'
 
 interface RunState { pkg: DirectorPackage; requests: AssetRequest[]; assets: GeneratedAsset[]; reviews: VisionReviewResult[] }
@@ -91,6 +92,8 @@ export async function rerunAsset(input: { runDir: string; assetId: string; image
     file: path.join(input.runDir, 'asset-state.json'), requests: state.requests, assets: nextAssets, reviews: nextReviews,
     motions: committed.motions, reasonByAsset: new Map([[input.assetId, reason]]),
   })
+  writePrecutSummary({ runDir: input.runDir, pkg: state.pkg, requests: state.requests, assets: nextAssets, reviews: nextReviews, motions: committed.motions })
+  logger.emit({ stage: 'precut', type: 'precut.summary-updated', message: 'precut summary refreshed after asset rerun', assetId: input.assetId, shotId: request.shotId })
   logger.emit({
     stage: 'asset', type: 'asset.rerun-committed', message: 'replacement became the active image and cache entry',
     assetId: input.assetId, shotId: request.shotId, data: { imagePath: regenerated.imagePath },
@@ -145,6 +148,8 @@ export async function rerunShot(input: { runDir: string; shotId: string; imagePr
     file: path.join(input.runDir, 'asset-state.json'), requests: state.requests, assets: nextAssets, reviews: nextReviews,
     motions: committed.motions, reasonByAsset: new Map(targetRequests.map(request => [request.assetId, 'user-shot-rerun'])),
   })
+  writePrecutSummary({ runDir: input.runDir, pkg: state.pkg, requests: state.requests, assets: nextAssets, reviews: nextReviews, motions: committed.motions })
+  logger.emit({ stage: 'precut', type: 'precut.summary-updated', message: 'precut summary refreshed after shot rerun', shotId: input.shotId })
   logger.emit({ stage: 'asset', type: 'shot.rerun-committed', message: 'shot replacements became active and cache entries were refreshed', shotId: input.shotId })
   return committed.previewPath
 }

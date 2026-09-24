@@ -31,6 +31,7 @@ DIRECT -> VALIDATE -> ASSET -> GROUND -> RESOLVE -> RENDER
 17. Every run/rerun must leave structured observability in `run-events.jsonl`; important cache, generation, Vision, motion and preview decisions must also be visible in the console.
 18. `asset-state.json` is the active asset/version ledger. Local fixes must record why the active image changed instead of silently replacing it.
 19. Debugging should identify the earliest plausible source layer (Director, prompt compiler, image candidate, Vision, motion, cache/workflow) before applying a downstream patch.
+20. Every successful run/rerun must refresh `precut-summary.md` and `precut-summary.json` from actual workflow state; summaries are deterministic observability, not another LLM planning pass.
 
 ## Current milestone
 

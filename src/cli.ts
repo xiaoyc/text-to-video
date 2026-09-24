@@ -16,6 +16,7 @@ import { createRunLock, verifyRunLock } from './runtime/lock.js'
 import { finalizeLockedRun } from './pipeline/finalize.js'
 import { rerunAsset, rerunShot } from './pipeline/rerun.js'
 import { analyzeAssetDebug } from './pipeline/debug.js'
+import { refreshPrecutSummaryFromRun } from './pipeline/precut-summary.js'
 
 function args(argv: string[]): Record<string, string | boolean> {
   const out: Record<string, string | boolean> = {}
@@ -110,6 +111,17 @@ async function main() {
     return
   }
 
+  if (command === 'precut-summary') {
+    const runDir = path.resolve(String(opts.run ?? 'data/run'))
+    const summary = refreshPrecutSummaryFromRun(runDir)
+    console.log(JSON.stringify({
+      markdownPath: path.join(runDir, 'precut-summary.md'),
+      jsonPath: path.join(runDir, 'precut-summary.json'),
+      overview: summary.overview,
+    }, null, 2))
+    return
+  }
+
   if (command === 'lock') {
     const runDir = path.resolve(String(opts.run ?? 'data/run'))
     console.log(JSON.stringify(createRunLock(runDir), null, 2))
@@ -162,9 +174,10 @@ Interactive workflow:
   2. rerun-asset regenerate exactly one prompt/image and update downstream workflow state
   3. rerun-shot  regenerate all image assets for one shot without rerunning the Director
   4. debug-asset diagnose one asset back to Director/prompt/image/Vision/motion/cache source
-  5. lock        freeze Director/assets/reviews/motion
-  6. tts         synthesize real audio and retime the locked creative plan
-  7. render      HyperFrames final render
+  5. precut-summary rebuild the human-readable shot/motion/display/text summary
+  6. lock        freeze Director/assets/reviews/motion
+  7. tts         synthesize real audio and retime the locked creative plan
+  8. render      HyperFrames final render
 
 Commands:
   run --script article.md --out data/run --text-command "<cmd>" --image-command "<cmd>" --vision-command "<cmd>"
@@ -172,6 +185,7 @@ Commands:
   rerun-asset --run data/run --asset asset-0001 --image-command "<cmd>" --vision-command "<cmd>" [--hint "user feedback"]
   rerun-shot --run data/run --shot shot-001 --image-command "<cmd>" --vision-command "<cmd>"
   debug-asset --run data/run --asset asset-0001
+  precut-summary --run data/run
   lock --run data/run
   tts --run data/run --tts-command "<cmd>" [--concurrency 3]
   preview --run data/run

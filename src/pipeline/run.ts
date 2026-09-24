@@ -16,6 +16,7 @@ import { buildPreviewProject } from '../preview/project.js'
 import { writePreview } from '../preview/html.js'
 import { synthesizeTts } from '../providers/tts.js'
 import { retimeDirectorPackage } from './retime.js'
+import { writePrecutSummary } from './precut-summary.js'
 import { createRunLogger, type RunLogger } from '../runtime/run-log.js'
 import { ensureDir, writeAssetPromptFiles, writeJson } from '../runtime/workspace.js'
 
@@ -272,6 +273,12 @@ export async function runPipeline(options: PipelineRunOptions): Promise<Pipeline
   writeJson(path.join(options.outputDir, 'preview-plan.json'), previewPlan)
   const previewPath = writePreview(previewPlan, path.join(options.outputDir, 'preview'), true)
   logger.emit({ stage: 'preview', type: 'preview.complete', message: 'preview rebuilt', data: { previewPath } })
+
+  const precut = writePrecutSummary({ runDir: options.outputDir, pkg, requests, assets, reviews, motions })
+  logger.emit({
+    stage: 'precut', type: 'precut.summary-updated', message: `precut summary updated for ${precut.overview.shotCount} shots`,
+    data: { markdownPath: path.join(options.outputDir, 'precut-summary.md'), jsonPath: path.join(options.outputDir, 'precut-summary.json') },
+  })
 
   const metrics: RunMetrics = {
     director: { ...director.metrics, durationMs: Date.now() - started },

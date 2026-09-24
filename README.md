@@ -87,6 +87,10 @@ director-findings.json
 asset-requests.json
 prompts/*.md
 asset-cache.json
+asset-state.json
+precut-summary.md
+precut-summary.json
+run-events.jsonl
 assets.json
 vision-reviews.json
 resolved-motions.json
@@ -122,6 +126,14 @@ npm run dev -- rerun-shot \
 ```
 
 Explicit reruns generate into an isolated candidate directory first. If Vision review or grounded motion fails, the currently active workflow and cache remain unchanged.
+
+The workflow also keeps a human-readable precut view in `precut-summary.md` plus a structured `precut-summary.json`. Each shot summarizes narration purpose, visual subject, actual grounded motion, displayed assets/render mode, subtitle text, asset version/cache/Vision state, and warnings. These files refresh automatically after `run`, `rerun-asset`, `rerun-shot`, and final TTS retiming.
+
+You can rebuild them without rerunning models or images:
+
+```bash
+npm run dev -- precut-summary --run data/my-run
+```
 
 ### 3. Lock the approved creative plan
 
