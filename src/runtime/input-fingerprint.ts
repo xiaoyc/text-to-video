@@ -1,7 +1,7 @@
 import crypto from 'node:crypto'
 
 // Bump these when the Director output contract or deterministic prompt compilation changes.
-export const DIRECTOR_CONTRACT_VERSION = 1
+export const DIRECTOR_CONTRACT_VERSION = 2
 export const ASSET_PROMPT_COMPILER_VERSION = 1
 
 export interface PlanInputFingerprint {

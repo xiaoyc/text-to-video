@@ -1,4 +1,5 @@
 import type { DirectorFinding, DirectorPackage, DirectorShot } from '../domain/types.js'
+import { assessVisualRhythm } from './visual-rhythm.js'
 
 function finding(
   severity: DirectorFinding['severity'],
@@ -44,6 +45,31 @@ function validateShot(shot: DirectorShot, beatIds: Set<string>): DirectorFinding
     }
   }
 
+  for (const atMs of shot.internalBeatsMs) {
+    if (atMs <= 0 || atMs >= shot.durationMs) {
+      findings.push(finding('blocking', 'visual-rhythm', `internal beat ${atMs}ms must be inside the shot`, shot.shotId))
+    }
+  }
+
+  for (const event of shot.visualEvents ?? []) {
+    if (event.atMs < 0 || event.atMs > shot.durationMs) {
+      findings.push(finding('blocking', 'visual-rhythm', `visual event ${event.type} at ${event.atMs}ms is outside the shot`, shot.shotId))
+    }
+    if (!event.purpose.trim()) {
+      findings.push(finding('warning', 'visual-rhythm', `visual event ${event.type} has no purpose`, shot.shotId))
+    }
+  }
+
+  for (const overlay of shot.overlays ?? []) {
+    if (overlay.atMs < 0 || overlay.atMs >= shot.durationMs) {
+      findings.push(finding('blocking', 'visual-rhythm', `overlay ${overlay.type} starts outside the shot`, shot.shotId))
+    }
+    if (overlay.endMs !== undefined && (overlay.endMs <= overlay.atMs || overlay.endMs > shot.durationMs)) {
+      findings.push(finding('blocking', 'visual-rhythm', `overlay ${overlay.type} has invalid endMs`, shot.shotId))
+    }
+    if (!overlay.text.trim()) findings.push(finding('blocking', 'schema', `overlay ${overlay.type} text is empty`, shot.shotId))
+  }
+
   for (const state of shot.assetStates) {
     const visible = new Set(state.visibleSubjectIds)
     for (const hidden of state.hiddenSubjectIds) {
@@ -76,17 +102,17 @@ function validateShot(shot: DirectorShot, beatIds: Set<string>): DirectorFinding
     }
   }
 
-  const hasMeaningfulChange = shot.assetStates.length > 1 || shot.internalBeatsMs.length > 0 || Boolean(shot.reveal)
-  if (shot.durationMs > 6500 && !hasMeaningfulChange) {
+  const rhythm = assessVisualRhythm(shot)
+  if (!rhythm.passed) {
     findings.push(finding(
       'blocking',
       'visual-rhythm',
-      `shot lasts ${shot.durationMs}ms without an internal beat, reveal, or asset-state change`,
+      `shot longest meaningful visual idle is ${rhythm.longestIdleMs}ms (budget ${rhythm.maxIdleMs}ms)`,
       shot.shotId,
-      'Add meaningful visual progression or split the shot for narrative reasons.',
+      'Split the visual idea or add source-driven structural/informational visual events, overlays, or reveals. Decorative motion alone does not count.',
     ))
-  } else if (shot.durationMs > 5000 && !hasMeaningfulChange) {
-    findings.push(finding('warning', 'visual-rhythm', 'long shot has no meaningful internal visual change', shot.shotId))
+  } else if (shot.durationMs > 8000 && rhythm.events.length <= 2) {
+    findings.push(finding('warning', 'visual-rhythm', 'long shot has no explicit internal informational event', shot.shotId))
   }
 
   return findings
@@ -105,11 +131,58 @@ export function validateDirectorPackage(pkg: DirectorPackage): DirectorFinding[]
     beatIds.add(beat.beatId)
   }
 
+  if (pkg.attention.hookWindowMs < 5000 || pkg.attention.hookWindowMs > 12000) {
+    findings.push(finding('warning', 'hook', `hookWindowMs ${pkg.attention.hookWindowMs}ms is outside the recommended 5-12s range`))
+  }
+  if (pkg.attention.payoff && !beatIds.has(pkg.attention.payoff.targetBeatId)) {
+    findings.push(finding('blocking', 'hook', `attention payoff references unknown beat ${pkg.attention.payoff.targetBeatId}`))
+  }
+  for (const point of pkg.attention.curve ?? []) {
+    if (!beatIds.has(point.beatId)) findings.push(finding('blocking', 'hook', `attention curve references unknown beat ${point.beatId}`))
+    if (!Number.isFinite(point.energy) || point.energy < 0 || point.energy > 1) {
+      findings.push(finding('blocking', 'hook', `attention energy for ${point.beatId} must be within 0..1`))
+    }
+  }
+
   const shotIds = new Set<string>()
   for (const shot of pkg.shots) {
     if (shotIds.has(shot.shotId)) findings.push(finding('blocking', 'schema', `duplicate shotId ${shot.shotId}`, shot.shotId))
     shotIds.add(shot.shotId)
     findings.push(...validateShot(shot, beatIds))
+  }
+
+  const coveredBeatIds = new Set(pkg.shots.map(shot => shot.beatId))
+  for (const beat of pkg.narrative.beats) {
+    if (!coveredBeatIds.has(beat.beatId)) {
+      findings.push(finding(
+        'blocking',
+        'visual-rhythm',
+        `narrative beat ${beat.beatId} has no shot coverage`,
+        undefined,
+        'Every narrative beat must be represented by at least one shot; do not repair by dropping unrelated beats.',
+      ))
+    }
+  }
+
+  if (pkg.shots.length) {
+    const first = pkg.shots[0]!
+    if (first.startMs !== 0) {
+      findings.push(finding('blocking', 'schema', `timeline must start at 0ms, but first shot starts at ${first.startMs}ms`, first.shotId))
+    }
+    for (let index = 1; index < pkg.shots.length; index += 1) {
+      const previous = pkg.shots[index - 1]!
+      const current = pkg.shots[index]!
+      if (current.startMs !== previous.endMs) {
+        const relation = current.startMs > previous.endMs ? 'gap' : 'overlap'
+        findings.push(finding(
+          'blocking',
+          'schema',
+          `timeline ${relation}: ${previous.shotId} ends at ${previous.endMs}ms but ${current.shotId} starts at ${current.startMs}ms`,
+          current.shotId,
+          'Keep the estimated shot timeline contiguous. Timing can be retimed later by TTS, but planning must not omit spans.',
+        ))
+      }
+    }
   }
 
   for (let index = 2; index < pkg.shots.length; index += 1) {

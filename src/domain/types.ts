@@ -4,6 +4,54 @@ export type Placement = 'center' | 'left-third' | 'right-third' | 'lower-third' 
 export type MotionType = 'static' | 'push-in' | 'pull-out' | 'pan-left' | 'pan-right' | 'tracking' | 'arc' | 'crane-up' | 'crane-down'
 export type MotionIntensity = 'subtle' | 'medium' | 'strong'
 export type RenderMode = '2d' | '2.5d' | '3d' | 'hybrid'
+export type BeatType = 'hook' | 'setup' | 'tension' | 'suspense' | 'contrast' | 'reveal' | 'turn' | 'emotion-peak' | 'aftermath' | 'transition'
+export type ShotTemplateId =
+  | 'historical-still'
+  | 'low-angle-reveal'
+  | 'portrait-identity'
+  | 'relationship-reveal'
+  | 'document-insert'
+  | 'character-card'
+  | 'citation-card'
+  | 'chapter-card'
+  | 'micro-action'
+export type MotionEnvelope =
+  | 'steady'
+  | 'punch-in'
+  | 'reveal-accelerate-settle'
+  | 'slow-build-payoff'
+  | 'float-observe'
+  | 'whip-settle'
+  | 'orbit-reveal'
+  | 'crane-discovery'
+  | 'map-dive'
+export type AttentionGoal = 'interrupt' | 'curiosity' | 'partial-payoff' | 'context' | 'escalate' | 'contrast' | 'reveal' | 'emotion' | 'breath'
+export type VisualEventType =
+  | 'internal-beat'
+  | 'overlay-enter'
+  | 'overlay-update'
+  | 'asset-state-change'
+  | 'reveal'
+  | 'camera-phase'
+  | 'diagram-update'
+  | 'deliberate-breath'
+export type VisualImpact = 'structural' | 'informational' | 'decorative'
+export type OverlayType = 'emphasis-word' | 'identity' | 'explanation' | 'citation' | 'chapter-label'
+
+export interface VisualEvent {
+  atMs: number
+  type: VisualEventType
+  impact: VisualImpact
+  purpose: string
+}
+
+export interface OverlayPlan {
+  type: OverlayType
+  text: string
+  atMs: number
+  endMs?: number
+  purpose?: string
+}
 
 export interface Point {
   x: number
@@ -20,6 +68,7 @@ export interface NarrativeBeat {
   text: string
   purpose: string
   importance: 'low' | 'medium' | 'high'
+  type?: BeatType
 }
 
 export interface AttentionPlan {
@@ -27,6 +76,20 @@ export interface AttentionPlan {
   hookWindowMs: number
   strategy: string
   withheldSubjectIds: string[]
+  patternInterrupt?: {
+    type: string
+    description: string
+  }
+  payoff?: {
+    targetBeatId: string
+    description: string
+  }
+  curve?: Array<{
+    beatId: string
+    goal: AttentionGoal
+    energy: number
+    reason: string
+  }>
 }
 
 export interface CharacterDesign {
@@ -97,6 +160,10 @@ export interface DirectorShot {
   subject: ShotSubject
   intent: ShotIntent
   motion: CreativeMotionIntent
+  shotTemplateId?: ShotTemplateId
+  motionEnvelope?: MotionEnvelope
+  visualEvents?: VisualEvent[]
+  overlays?: OverlayPlan[]
   assetStates: AssetState[]
   internalBeatsMs: number[]
   renderMode: RenderMode
@@ -130,6 +197,7 @@ export type FindingCategory =
   | 'asset-state'
   | 'identity'
   | 'spatial'
+  | 'repair'
 
 export interface DirectorFinding {
   severity: FindingSeverity
