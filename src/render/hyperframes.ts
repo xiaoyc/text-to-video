@@ -2,7 +2,8 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import type { PreviewProject } from '../domain/types.js'
-import { preparePreviewProject, buildPreviewHtml } from '../preview/html.js'
+import { preparePreviewProject } from '../preview/html.js'
+import { buildHyperFramesComposition } from './hyperframes-html.js'
 
 export const HYPERFRAMES_VERSION = '0.8.57'
 
@@ -39,7 +40,7 @@ export function renderHyperFrames(input: {
   const planPath = path.join(projectDir, 'video-plan.json')
   const htmlPath = path.join(projectDir, 'index.html')
   fs.writeFileSync(planPath, JSON.stringify({ ...prepared, renderer: { hyperframes: HYPERFRAMES_VERSION } }, null, 2))
-  fs.writeFileSync(htmlPath, buildPreviewHtml(prepared, false))
+  fs.writeFileSync(htmlPath, buildHyperFramesComposition(prepared))
   runHyperFrames(projectDir, ['lint'])
   if (input.runCheck !== false) runHyperFrames(projectDir, ['check'])
   const outputPath = path.resolve(input.outputPath ?? path.join(input.outputDir, 'render.mp4'))
